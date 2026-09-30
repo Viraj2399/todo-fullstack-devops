@@ -1,0 +1,214 @@
+name: CI-CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  TRIVY_VERSION: "0.65.0"
+  TRIVY_DB_REPOSITORY: "public.ecr.aws/aquasecurity/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2"
+  TRIVY_NO_PROGRESS: "true"
+
+jobs:
+  # ============ STAGE 1: TEST ============
+  test:
+    name: 1. Test - ${{ matrix.app }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app: api
+            test: npm test -- --coverage --passWithNoTests
+            build: npm run build
+            artifact_path: |
+              apps/api/dist
+              apps/api/coverage
+          - app: web
+            test: npm test -- --watch=false
+            build: npm run build -- --configuration production
+            artifact_path: apps/web/dist
+    defaults:
+      run:
+        working-directory: apps/${{ matrix.app }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/${{ matrix.app }}/package-lock.json
+      - run: npm ci
+      - run: npm run lint --if-present
+      - run: ${{ matrix.test }}
+      - run: ${{ matrix.build }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.app }}-build-${{ github.sha }}
+          path: ${{ matrix.artifact_path }}
+          retention-days: 14
+
+  # ============ STAGE 2: VALIDATE ============
+  gitleaks:
+    name: 2. Validate - Gitleaks
+    needs: [test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  trivy-fs:
+    name: 2. Validate - Trivy filesystem
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-trivy
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+      - name: Trivy fs scan
+        run: |
+          trivy fs \
+            --scanners vuln \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --exit-code 1 \
+            .
+
+  npm-audit:
+    name: 2. Validate - npm audit
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: |
+          (cd apps/api && npm audit --omit=dev --audit-level=high)
+          (cd apps/web && npm audit --omit=dev --audit-level=high)
+
+  codeql:
+    name: 2. Validate - CodeQL
+    needs: [test]
+    if: ${{ github.event.repository.private == false }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+      - uses: github/codeql-action/analyze@v3
+
+  gate:
+    name: 2. Validate - Gate
+    needs: [test, gitleaks, trivy-fs, npm-audit, codeql]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: |
+          echo "$RESULTS"
+          if echo "$RESULTS" | grep -Eq 'failure|cancelled'; then
+            echo "::error::Gate FAILED"; exit 1
+          fi
+          echo "Gate passed."
+
+  # ============ STAGE 3: VERSION (develop only) ============
+  version:
+    name: 3. Version - semantic-release
+    needs: [gate]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      sha: ${{ steps.ver.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: npx semantic-release
+      - id: ver
+        run: |
+          git pull --ff-only origin develop || true
+          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  # ============ STAGE 4: BUILD + IMAGE SCAN ============
+  build:
+    name: 4. Build - ${{ matrix.name }}
+    needs: [gate, version]
+    if: ${{ !cancelled() && needs.gate.result == 'success' && needs.version.result != 'failure' && github.ref != 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: api
+            context: apps/api
+          - name: web
+            context: apps/web
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.sha || github.sha }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: false
+          provenance: false
+          tags: local/${{ matrix.name }}:build
+          outputs: type=docker,dest=/tmp/${{ matrix.name }}.tar
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+      - uses: ./.github/actions/setup-trivy
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+      - name: Trivy image scan
+        run: |
+          trivy image \
+            --input /tmp/${{ matrix.name }}.tar \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --exit-code 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image-${{ matrix.name }}
+          path: /tmp/${{ matrix.name }}.tar
+          retention-days: 7
