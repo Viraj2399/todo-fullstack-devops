@@ -35,7 +35,7 @@ jobs:
               apps/api/dist
               apps/api/coverage
           - app: web
-            test: npm test -- --watch=false
+            test: npm test -- --watch=false --browsers=ChromeHeadless
             build: npm run build -- --configuration production
             artifact_path: apps/web/dist
     defaults:
