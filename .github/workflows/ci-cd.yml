@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 env:
-  TRIVY_VERSION: "0.65.0"
+  TRIVY_VERSION: "0.74.0"
   TRIVY_DB_REPOSITORY: "public.ecr.aws/aquasecurity/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2"
   TRIVY_NO_PROGRESS: "true"
 
@@ -86,15 +86,16 @@ jobs:
           key: trivy-db-${{ github.run_id }}
           restore-keys: trivy-db-
       - name: Install Trivy
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          V="${TRIVY_VERSION}"
-          BASE="https://github.com/aquasecurity/trivy/releases/download/v${V}"
-          FILE="trivy_${V}_Linux-64bit.tar.gz"
-          curl -fsSL --retry 5 --retry-all-errors -o "/tmp/${FILE}" "${BASE}/${FILE}"
-          curl -fsSL --retry 5 --retry-all-errors -o /tmp/trivy_checksums.txt "${BASE}/trivy_${V}_checksums.txt"
-          (cd /tmp && grep " ${FILE}\$" trivy_checksums.txt | sha256sum -c -)
-          sudo tar -xzf "/tmp/${FILE}" -C /usr/local/bin trivy
+          mkdir -p /tmp/trivy && cd /tmp/trivy
+          gh release download "v${TRIVY_VERSION}" -R aquasecurity/trivy \
+            -p '*Linux-64bit.tar.gz' -p '*checksums.txt'
+          ls -la
+          grep 'Linux-64bit.tar.gz$' ./*checksums.txt | sha256sum -c -
+          sudo tar -xzf ./*Linux-64bit.tar.gz -C /usr/local/bin trivy
           trivy --version
       - name: Trivy fs scan
         run: |
@@ -216,15 +217,16 @@ jobs:
           key: trivy-db-${{ github.run_id }}
           restore-keys: trivy-db-
       - name: Install Trivy
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          V="${TRIVY_VERSION}"
-          BASE="https://github.com/aquasecurity/trivy/releases/download/v${V}"
-          FILE="trivy_${V}_Linux-64bit.tar.gz"
-          curl -fsSL --retry 5 --retry-all-errors -o "/tmp/${FILE}" "${BASE}/${FILE}"
-          curl -fsSL --retry 5 --retry-all-errors -o /tmp/trivy_checksums.txt "${BASE}/trivy_${V}_checksums.txt"
-          (cd /tmp && grep " ${FILE}\$" trivy_checksums.txt | sha256sum -c -)
-          sudo tar -xzf "/tmp/${FILE}" -C /usr/local/bin trivy
+          mkdir -p /tmp/trivy && cd /tmp/trivy
+          gh release download "v${TRIVY_VERSION}" -R aquasecurity/trivy \
+            -p '*Linux-64bit.tar.gz' -p '*checksums.txt'
+          ls -la
+          grep 'Linux-64bit.tar.gz$' ./*checksums.txt | sha256sum -c -
+          sudo tar -xzf ./*Linux-64bit.tar.gz -C /usr/local/bin trivy
           trivy --version
       - name: Trivy image scan
         run: |
