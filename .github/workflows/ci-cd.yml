@@ -80,9 +80,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-trivy
+      - uses: actions/cache@v4
         with:
-          version: ${{ env.TRIVY_VERSION }}
+          path: ~/.cache/trivy
+          key: trivy-db-${{ github.run_id }}
+          restore-keys: trivy-db-
+      - name: Install Trivy
+        run: |
+          set -euo pipefail
+          V="${TRIVY_VERSION}"
+          BASE="https://github.com/aquasecurity/trivy/releases/download/v${V}"
+          FILE="trivy_${V}_Linux-64bit.tar.gz"
+          curl -fsSL --retry 5 --retry-all-errors -o "/tmp/${FILE}" "${BASE}/${FILE}"
+          curl -fsSL --retry 5 --retry-all-errors -o /tmp/trivy_checksums.txt "${BASE}/trivy_${V}_checksums.txt"
+          (cd /tmp && grep " ${FILE}\$" trivy_checksums.txt | sha256sum -c -)
+          sudo tar -xzf "/tmp/${FILE}" -C /usr/local/bin trivy
+          trivy --version
       - name: Trivy fs scan
         run: |
           trivy fs \
@@ -197,9 +210,22 @@ jobs:
           outputs: type=docker,dest=/tmp/${{ matrix.name }}.tar
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
-      - uses: ./.github/actions/setup-trivy
+      - uses: actions/cache@v4
         with:
-          version: ${{ env.TRIVY_VERSION }}
+          path: ~/.cache/trivy
+          key: trivy-db-${{ github.run_id }}
+          restore-keys: trivy-db-
+      - name: Install Trivy
+        run: |
+          set -euo pipefail
+          V="${TRIVY_VERSION}"
+          BASE="https://github.com/aquasecurity/trivy/releases/download/v${V}"
+          FILE="trivy_${V}_Linux-64bit.tar.gz"
+          curl -fsSL --retry 5 --retry-all-errors -o "/tmp/${FILE}" "${BASE}/${FILE}"
+          curl -fsSL --retry 5 --retry-all-errors -o /tmp/trivy_checksums.txt "${BASE}/trivy_${V}_checksums.txt"
+          (cd /tmp && grep " ${FILE}\$" trivy_checksums.txt | sha256sum -c -)
+          sudo tar -xzf "/tmp/${FILE}" -C /usr/local/bin trivy
+          trivy --version
       - name: Trivy image scan
         run: |
           trivy image \
