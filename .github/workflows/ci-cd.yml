@@ -15,27 +15,38 @@ permissions:
   contents: read
 
 env:
-  TRIVY_VERSION: v0.67.2   # https://github.com/aquasecurity/trivy/releases බලලා ඇත්ත tag එකක් දාන්න
+  TRIVY_VERSION: "0.67.2"
 
 jobs:
-  # ============ STAGE 1: TEST ============
+  # ============================================================
+  # STAGE 1: TEST
+  # ============================================================
+
   api:
     name: 1. Test - API
     runs-on: ubuntu-latest
+
     defaults:
       run:
         working-directory: apps/api
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: apps/api/package-lock.json
+
       - run: npm ci
+
       - run: npm run lint --if-present
+
       - run: npm test -- --coverage --passWithNoTests
+
       - run: npm run build
+
       - uses: actions/upload-artifact@v4
         with:
           name: api-build-${{ github.sha }}
@@ -47,38 +58,52 @@ jobs:
   web:
     name: 1. Test - Web
     runs-on: ubuntu-latest
+
     defaults:
       run:
         working-directory: apps/web
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
+
       - run: npm ci
+
       - run: npm run lint --if-present
+
       - run: npm test -- --watch=false
+
       - run: npm run build -- --configuration production
+
       - uses: actions/upload-artifact@v4
         with:
           name: web-build-${{ github.sha }}
           path: apps/web/dist
           retention-days: 30
 
-  # ============ STAGE 2: VALIDATE (security) ============
+  # ============================================================
+  # STAGE 2: VALIDATE / SECURITY
+  # ============================================================
+
   gitleaks:
     name: 2. Validate - Gitleaks
     needs: [api, web]
     runs-on: ubuntu-latest
+
     permissions:
       contents: read
       pull-requests: read
+
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -87,115 +112,184 @@ jobs:
     name: 2. Validate - Trivy filesystem
     needs: [api, web]
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
-      - name: Install Trivy
-        run: |
-          mkdir -p "$HOME/.local/bin"
-          curl -fsSL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-            | sh -s -- -b "$HOME/.local/bin" ${{ env.TRIVY_VERSION }}
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          "$HOME/.local/bin/trivy" --version
+
       - name: Trivy filesystem scan
-        run: trivy fs --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 .
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: 1
+          format: table
 
   npm-audit:
     name: 2. Validate - npm audit
     needs: [api, web]
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+
       - run: |
-          (cd apps/api && npm audit --omit=dev --audit-level=high)
-          (cd apps/web && npm audit --omit=dev --audit-level=high)
+          cd apps/api
+          npm audit --omit=dev --audit-level=high
+
+      - run: |
+          cd apps/web
+          npm audit --omit=dev --audit-level=high
 
   codeql:
     name: 2. Validate - CodeQL
     needs: [api, web]
+
     if: ${{ github.event.repository.private == false }}
+
     runs-on: ubuntu-latest
+
     permissions:
       contents: read
       security-events: write
       actions: read
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: github/codeql-action/init@v3
         with:
           languages: javascript-typescript
+
       - uses: github/codeql-action/analyze@v3
 
-  # ============ GATE ============
+  # ============================================================
+  # GATE
+  # ============================================================
+
   gate:
     name: 3. Quality and security gate
-    needs: [api, web, gitleaks, trivy-fs, npm-audit, codeql]
+
+    needs:
+      [
+        api,
+        web,
+        gitleaks,
+        trivy-fs,
+        npm-audit,
+        codeql
+      ]
+
     if: always()
+
     runs-on: ubuntu-latest
+
     steps:
-      - env:
+      - name: Check job results
+        env:
           RESULTS: ${{ toJSON(needs.*.result) }}
         run: |
           echo "$RESULTS"
+
           if echo "$RESULTS" | grep -Eq 'failure|cancelled'; then
-            echo "::error::Gate FAILED"; exit 1
+            echo "::error::Gate FAILED"
+            exit 1
           fi
+
           echo "Gate passed."
 
-  # ============ STAGE 3: VERSION RELEASE (develop only) ============
+  # ============================================================
+  # STAGE 3: VERSION RELEASE - DEVELOP ONLY
+  # ============================================================
+
   release:
     name: 4. Release - semantic-release
-    needs: [gate]
+
+    needs:
+      - gate
+
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+
     runs-on: ubuntu-latest
+
     permissions:
       contents: write
       issues: write
       pull-requests: write
+
     outputs:
       version: ${{ steps.ver.outputs.version }}
       sha: ${{ steps.ver.outputs.sha }}
+
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_TOKEN }}
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+
       - run: npm ci
+
       - name: semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: npx semantic-release
+
       - id: ver
         run: |
           git pull --ff-only origin develop || true
+
           echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-  # ============ STAGE 4: BUILD + IMAGE SCAN ============
+  # ============================================================
+  # STAGE 4: BUILD + IMAGE SCAN
+  # ============================================================
+
   build-image:
     name: 5. Build+scan - ${{ matrix.name }}
-    needs: [gate, release]
-    if: ${{ !cancelled() && needs.gate.result == 'success' && needs.release.result != 'failure' && github.ref != 'refs/heads/main' }}
+
+    needs:
+      - gate
+      - release
+
+    if: >
+      !cancelled() &&
+      needs.gate.result == 'success' &&
+      needs.release.result != 'failure' &&
+      github.ref != 'refs/heads/main'
+
     runs-on: ubuntu-latest
+
     strategy:
       fail-fast: false
+
       matrix:
         include:
           - name: api
             context: apps/api
+
           - name: web
             context: apps/web
+
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.release.outputs.sha || github.sha }}
+
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
           push: false
@@ -204,17 +298,26 @@ jobs:
           outputs: type=docker,dest=/tmp/${{ matrix.name }}.tar
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
-      - run: docker load -i /tmp/${{ matrix.name }}.tar
-      - name: Install Trivy
+
+      - name: Load Docker image
         run: |
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-            | sh -s -- -b /usr/local/bin ${{ env.TRIVY_VERSION }}
-      - name: Trivy image scan (HIGH/CRITICAL fail)
-        run: trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 local/${{ matrix.name }}:build
+          docker load -i /tmp/${{ matrix.name }}.tar
+
+      - name: Verify Docker image
+        run: |
+          docker images
+
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: local/${{ matrix.name }}:build
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: 1
+          format: table
+
       - uses: actions/upload-artifact@v4
         with:
           name: image-${{ matrix.name }}
           path: /tmp/${{ matrix.name }}.tar
           retention-days: 7
-
- 
