@@ -15,9 +15,9 @@ permissions:
   contents: read
 
 jobs:
-  # ================= TEST =================
+  # ============ STAGE 1: TEST ============
   api:
-    name: 2. Test - API
+    name: 1. Test - API
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -42,7 +42,7 @@ jobs:
           retention-days: 30
 
   web:
-    name: 2. Test - Web
+    name: 1. Test - Web
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -56,8 +56,7 @@ jobs:
           cache-dependency-path: apps/web/package-lock.json
       - run: npm ci
       - run: npm run lint --if-present
-      
-      - run: npm test -- --watch=false --browsers=ChromeHeadless
+      - run: npm test -- --watch=false
       - run: npm run build -- --configuration production
       - uses: actions/upload-artifact@v4
         with:
@@ -65,9 +64,10 @@ jobs:
           path: apps/web/dist
           retention-days: 30
 
-  # ================= SECURITY =================
+  # ============ STAGE 2: VALIDATE (security) ============
   gitleaks:
-    name: 3. Security - Gitleaks
+    name: 2. Validate - Gitleaks
+    needs: [api, web]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -78,11 +78,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   trivy-fs:
-    name: 3. Security - Trivy filesystem
+    name: 2. Validate - Trivy filesystem
+    needs: [api, web]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: aquasecurity/trivy-action@0.28.0
+      - uses: aquasecurity/trivy-action@v0.33.1
         with:
           scan-type: fs
           scan-ref: .
@@ -91,7 +92,8 @@ jobs:
           exit-code: "1"
 
   npm-audit:
-    name: 3. Security - npm audit
+    name: 2. Validate - npm audit
+    needs: [api, web]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -103,7 +105,8 @@ jobs:
           (cd apps/web && npm audit --omit=dev --audit-level=high)
 
   codeql:
-    name: 3. Security - CodeQL
+    name: 2. Validate - CodeQL
+    needs: [api, web]
     if: ${{ github.event.repository.private == false }}
     runs-on: ubuntu-latest
     permissions:
@@ -117,9 +120,10 @@ jobs:
           languages: javascript-typescript
       - uses: github/codeql-action/analyze@v3
 
-  security-gate:
-    name: 4. Security gate
-    needs: [gitleaks, trivy-fs, npm-audit, codeql]
+  # ============ GATE ============
+  gate:
+    name: 3. Quality and security gate
+    needs: [api, web, gitleaks, trivy-fs, npm-audit, codeql]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -128,14 +132,14 @@ jobs:
         run: |
           echo "$RESULTS"
           if echo "$RESULTS" | grep -Eq 'failure|cancelled'; then
-            echo "::error::Security gate FAILED"; exit 1
+            echo "::error::Gate FAILED"; exit 1
           fi
-          echo "Security gate passed."
+          echo "Gate passed."
 
-  # ================= RELEASE (develop only) =================
+  # ============ STAGE 3: VERSION RELEASE (develop only) ============
   release:
-    name: 4b. Release - semantic-release
-    needs: [api, web, security-gate]
+    name: 4. Release - semantic-release
+    needs: [gate]
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
     permissions:
@@ -163,13 +167,12 @@ jobs:
           git pull --ff-only origin develop || true
           echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          echo "Current version: $(node -p "require('./package.json').version")"
 
-  # ================= BUILD + SCAN =================
+  # ============ STAGE 4: BUILD + IMAGE SCAN ============
   build-image:
     name: 5. Build+scan - ${{ matrix.name }}
-    needs: [api, web, security-gate, release]
-    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && github.ref != 'refs/heads/main' }}
+    needs: [gate, release]
+    if: ${{ !cancelled() && needs.gate.result == 'success' && needs.release.result != 'failure' && github.ref != 'refs/heads/main' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -194,7 +197,7 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
       - run: docker load -i /tmp/${{ matrix.name }}.tar
-      - uses: aquasecurity/trivy-action@0.28.0
+      - uses: aquasecurity/trivy-action@v0.33.1
         with:
           image-ref: local/${{ matrix.name }}:build
           severity: HIGH,CRITICAL
