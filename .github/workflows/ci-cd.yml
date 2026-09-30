@@ -91,9 +91,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Trivy
         run: |
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-            | sh -s -- -b /usr/local/bin ${{ env.TRIVY_VERSION }}
-          trivy --version
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sh -s -- -b "$HOME/.local/bin" ${{ env.TRIVY_VERSION }}
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/trivy" --version
       - name: Trivy filesystem scan
         run: trivy fs --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 .
 
