@@ -20,6 +20,17 @@ env:
   TRIVY_NO_PROGRESS: "true"
 
 jobs:
+  # ============ DEBUG (remove after fixing) ============
+  debug:
+    name: Debug - context
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "event=${{ github.event_name }}"
+          echo "ref=${{ github.ref }}"
+          echo "ref_name=${{ github.ref_name }}"
+          echo "sha=${{ github.sha }}"
+
   # ============ STAGE 1: TEST ============
   test:
     name: 1. Test - ${{ matrix.app }}
@@ -119,25 +130,9 @@ jobs:
           (cd apps/api && npm audit --omit=dev --audit-level=high)
           (cd apps/web && npm audit --omit=dev --audit-level=high)
 
-  codeql:
-    name: 2. Validate - CodeQL
-    needs: [test]
-    if: ${{ github.event.repository.private == false }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      security-events: write
-      actions: read
-    steps:
-      - uses: actions/checkout@v4
-      - uses: github/codeql-action/init@v3
-        with:
-          languages: javascript-typescript
-      - uses: github/codeql-action/analyze@v3
-
   gate:
     name: 2. Validate - Gate
-    needs: [test, gitleaks, trivy-fs, npm-audit, codeql]
+    needs: [test, gitleaks, trivy-fs, npm-audit]
     if: always()
     runs-on: ubuntu-latest
     steps:

@@ -18,6 +18,7 @@
   },
   "homepage": "https://github.com/Viraj2399/todo-fullstack-devops#readme",
   "devDependencies": {
+    "@semantic-release/git": "^11.0.1",
     "semantic-release": "^25.0.9"
   }
 }
