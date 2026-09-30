@@ -1,0 +1,23 @@
+{
+  "name": "todo-fullstack-devops",
+  "version": "1.0.0",
+  "description": "Full-stack TodoManagement application using Angular, NestJS, MongoDB Atlas, Docker, CI/CD, and AWS DevOps practices.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Viraj2399/todo-fullstack-devops.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Viraj2399/todo-fullstack-devops/issues"
+  },
+  "homepage": "https://github.com/Viraj2399/todo-fullstack-devops#readme",
+  "devDependencies": {
+    "semantic-release": "^25.0.9"
+  }
+}

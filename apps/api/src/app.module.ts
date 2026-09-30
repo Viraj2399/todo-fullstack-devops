@@ -3,47 +3,31 @@ import {
   ConfigModule,
   ConfigService,
 } from '@nestjs/config';
+import { MongooseModule } from '@nestjs/mongoose';
 
-import {
-  MongooseModule,
-} from '@nestjs/mongoose';
-
-import {
-  TodosModule,
-} from './todos/todos.module';
+import { HealthController } from './health.controller';
+import { TodosModule } from './todos/todos.module';
 
 @Module({
   imports: [
-
     ConfigModule.forRoot({
       isGlobal: true,
     }),
 
     MongooseModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
 
-      imports: [
-        ConfigModule,
-      ],
-
-      inject: [
-        ConfigService,
-      ],
-
-      useFactory: (
-        configService: ConfigService,
-      ) => ({
-
-        uri:
-          configService.get<string>(
-            'MONGODB_URI',
-          ),
-
+      useFactory: (configService: ConfigService) => ({
+        uri: configService.get<string>('MONGODB_URI'),
       }),
-
     }),
 
     TodosModule,
+  ],
 
+  controllers: [
+    HealthController,
   ],
 })
 export class AppModule {}
