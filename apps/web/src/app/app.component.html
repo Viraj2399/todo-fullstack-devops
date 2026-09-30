@@ -1,0 +1,289 @@
+<div class="page">
+
+  <div class="container">
+
+    <header class="header">
+
+      <div>
+        <h1>Todo Management</h1>
+
+        <p>
+          Manage your daily tasks
+        </p>
+      </div>
+
+    </header>
+
+
+    <section class="form-card">
+
+      <h2>Add New Todo</h2>
+
+      <div class="form-grid">
+
+        <div class="form-group">
+
+          <label>Task</label>
+
+          <input
+            type="text"
+            placeholder="Enter task"
+            [(ngModel)]="newTodo.task"
+          />
+
+        </div>
+
+
+        <div class="form-group">
+
+          <label>Date</label>
+
+          <input
+            type="date"
+            [(ngModel)]="newTodo.date"
+          />
+
+        </div>
+
+
+        <div class="form-group">
+
+          <label>Status</label>
+
+          <select
+            [(ngModel)]="newTodo.status"
+          >
+
+            <option value="Pending">
+              Pending
+            </option>
+
+            <option value="In Progress">
+              In Progress
+            </option>
+
+            <option value="Completed">
+              Completed
+            </option>
+
+          </select>
+
+        </div>
+
+
+        <div class="form-group">
+
+          <label>Duration</label>
+
+          <input
+            type="text"
+            placeholder="e.g. 2 hours"
+            [(ngModel)]="
+              newTodo.duration
+            "
+          />
+
+        </div>
+
+
+        <div class="form-group">
+
+          <label>Owner</label>
+
+          <input
+            type="text"
+            placeholder="Enter owner"
+            [(ngModel)]="
+              newTodo.owner
+            "
+          />
+
+        </div>
+
+      </div>
+
+
+      @if (errorMessage) {
+
+        <div class="error">
+
+          {{ errorMessage }}
+
+        </div>
+
+      }
+
+
+      <button
+        class="add-button"
+        (click)="addTodo()"
+      >
+        Add Todo
+      </button>
+
+    </section>
+
+
+    <section class="todo-card">
+
+      <div class="todo-header">
+
+        <h2>Todo List</h2>
+
+        <span>
+          {{ todos.length }} tasks
+        </span>
+
+      </div>
+
+
+      @if (loading) {
+
+        <div class="loading">
+          Loading todos...
+        </div>
+
+      }
+
+
+      @if (!loading && todos.length === 0) {
+
+        <div class="empty">
+
+          No todos found.
+
+        </div>
+
+      }
+
+
+      @if (!loading && todos.length > 0) {
+
+        <div class="table-wrapper">
+
+          <table>
+
+            <thead>
+
+              <tr>
+
+                <th>Task</th>
+
+                <th>Date</th>
+
+                <th>Status</th>
+
+                <th>Duration</th>
+
+                <th>Owner</th>
+
+                <th>Actions</th>
+
+              </tr>
+
+            </thead>
+
+
+            <tbody>
+
+              @for (
+                todo of todos;
+                track todo._id
+              ) {
+
+                <tr>
+
+                  <td class="task">
+                    {{ todo.task }}
+                  </td>
+
+                  <td>
+                    {{ todo.date }}
+                  </td>
+
+                  <td>
+
+                    <span
+                      class="status"
+                      [class.pending]="
+                        todo.status === 'Pending'
+                      "
+                      [class.progress]="
+                        todo.status === 'In Progress'
+                      "
+                      [class.completed]="
+                        todo.status === 'Completed'
+                      "
+                    >
+
+                      {{ todo.status }}
+
+                    </span>
+
+                  </td>
+
+                  <td>
+                    {{ todo.duration }}
+                  </td>
+
+                  <td>
+                    {{ todo.owner }}
+                  </td>
+
+                  <td>
+
+                    <div class="actions">
+
+                      @if (
+                        todo.status !==
+                        'Completed'
+                      ) {
+
+                        <button
+                          class="complete-button"
+                          (click)="
+                            completeTodo(todo)
+                          "
+                        >
+                          Complete
+                        </button>
+
+                      }
+
+
+                      @if (todo._id) {
+
+                        <button
+                          class="delete-button"
+                          (click)="
+                            deleteTodo(
+                              todo._id
+                            )
+                          "
+                        >
+                          Delete
+                        </button>
+
+                      }
+
+                    </div>
+
+                  </td>
+
+                </tr>
+
+              }
+
+            </tbody>
+
+          </table>
+
+        </div>
+
+      }
+
+    </section>
+
+  </div>
+
+</div>
