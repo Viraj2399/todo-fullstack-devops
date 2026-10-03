@@ -1,0 +1,141 @@
+﻿name: CD
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+  actions: read
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-south-1
+  ECS_CLUSTER: myapp-dev-ecs
+  AWS_ROLE_ARN: arn:aws:iam::462446639312:role/myapp-github-deploy
+  TRIVY_VERSION: "0.74.0"
+  TRIVY_DB_REPOSITORY: "public.ecr.aws/aquasecurity/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2"
+  TRIVY_NO_PROGRESS: "true"
+
+jobs:
+  deploy:
+    name: Deploy - ${{ matrix.app }}
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app: web
+            repo: myapp/dev/web
+            family: myapp-web-task
+            container: web
+            service: myapp-web-svc
+          - app: api
+            repo: myapp/dev/api
+            family: myapp-api-task
+            container: api
+            service: myapp-api-task-service
+    steps:
+      - name: Download release info
+        uses: actions/download-artifact@v4
+        with:
+          name: release-info
+          path: ${{ runner.temp }}/rel
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read release info
+        id: rel
+        run: |
+          echo "version=$(jq -r .version "$RUNNER_TEMP/rel/release-info.json")" >> "$GITHUB_OUTPUT"
+          echo "sha=$(jq -r .sha "$RUNNER_TEMP/rel/release-info.json")" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.rel.outputs.sha }}
+
+      - name: Build image (once)
+        run: |
+          docker build --platform linux/amd64 --provenance=false \
+            -t local/${{ matrix.app }}:build apps/${{ matrix.app }}
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/trivy
+          key: trivy-db-${{ github.run_id }}
+          restore-keys: trivy-db-
+
+      - name: Install Trivy
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/trivy && cd /tmp/trivy
+          gh release download "v${TRIVY_VERSION}" -R aquasecurity/trivy \
+            -p '*Linux-64bit.tar.gz' -p '*checksums.txt'
+          grep 'Linux-64bit.tar.gz$' ./*checksums.txt | sha256sum -c -
+          sudo tar -xzf ./*Linux-64bit.tar.gz -C /usr/local/bin trivy
+
+      - name: Trivy image scan + SBOM (before push)
+        run: |
+          trivy image --format cyclonedx --output sbom-${{ matrix.app }}.json local/${{ matrix.app }}:build
+          trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 \
+            --format table --output trivy-${{ matrix.app }}.txt local/${{ matrix.app }}:build
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-${{ matrix.app }}-${{ steps.rel.outputs.sha }}
+          path: |
+            sbom-${{ matrix.app }}.json
+            trivy-${{ matrix.app }}.txt
+          retention-days: 30
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Push image (SHA + version tags)
+        id: image
+        run: |
+          BASE=${{ steps.ecr.outputs.registry }}/${{ matrix.repo }}
+          docker tag local/${{ matrix.app }}:build "$BASE:${{ steps.rel.outputs.sha }}"
+          docker tag local/${{ matrix.app }}:build "$BASE:v${{ steps.rel.outputs.version }}"
+          docker push "$BASE:${{ steps.rel.outputs.sha }}"
+          docker push "$BASE:v${{ steps.rel.outputs.version }}"
+          echo "image=$BASE:${{ steps.rel.outputs.sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: Download current task definition
+        run: |
+          aws ecs describe-task-definition --task-definition ${{ matrix.family }} \
+            --query taskDefinition > task-def.json
+
+      - name: Render task definition
+        id: render
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-def.json
+          container-name: ${{ matrix.container }}
+          image: ${{ steps.image.outputs.image }}
+
+      - name: Deploy to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render.outputs.task-definition }}
+          service: ${{ matrix.service }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+          wait-for-minutes: 10

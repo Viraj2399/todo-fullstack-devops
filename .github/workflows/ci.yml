@@ -1,4 +1,4 @@
-name: CI-CD
+﻿name: CI
 
 on:
   push:
@@ -20,17 +20,6 @@ env:
   TRIVY_NO_PROGRESS: "true"
 
 jobs:
-  # ============ DEBUG (remove after fixing) ============
-  debug:
-    name: Debug - context
-    runs-on: ubuntu-latest
-    steps:
-      - run: |
-          echo "event=${{ github.event_name }}"
-          echo "ref=${{ github.ref }}"
-          echo "ref_name=${{ github.ref_name }}"
-          echo "sha=${{ github.sha }}"
-
   # ============ STAGE 1: TEST ============
   test:
     name: 1. Test - ${{ matrix.app }}
@@ -104,18 +93,11 @@ jobs:
           mkdir -p /tmp/trivy && cd /tmp/trivy
           gh release download "v${TRIVY_VERSION}" -R aquasecurity/trivy \
             -p '*Linux-64bit.tar.gz' -p '*checksums.txt'
-          ls -la
           grep 'Linux-64bit.tar.gz$' ./*checksums.txt | sha256sum -c -
           sudo tar -xzf ./*Linux-64bit.tar.gz -C /usr/local/bin trivy
           trivy --version
       - name: Trivy fs scan
-        run: |
-          trivy fs \
-            --scanners vuln \
-            --severity HIGH,CRITICAL \
-            --ignore-unfixed \
-            --exit-code 1 \
-            .
+        run: trivy fs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 .
 
   npm-audit:
     name: 2. Validate - npm audit
@@ -145,19 +127,16 @@ jobs:
           fi
           echo "Gate passed."
 
-  # ============ STAGE 3: VERSION (develop only) ============
+  # ============ STAGE 3: VERSION (main only) ============
   version:
     name: 3. Version - semantic-release
     needs: [gate]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
       issues: write
       pull-requests: write
-    outputs:
-      version: ${{ steps.ver.outputs.version }}
-      sha: ${{ steps.ver.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -172,66 +151,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: npx semantic-release
-      - id: ver
+      - name: Write release info
         run: |
-          git pull --ff-only origin develop || true
-          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
-  # ============ STAGE 4: BUILD + IMAGE SCAN ============
-  build:
-    name: 4. Build - ${{ matrix.name }}
-    needs: [gate, version]
-    if: ${{ !cancelled() && needs.gate.result == 'success' && needs.version.result != 'failure' && github.ref != 'refs/heads/main' }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: api
-            context: apps/api
-          - name: web
-            context: apps/web
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.version.outputs.sha || github.sha }}
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
-        with:
-          context: ${{ matrix.context }}
-          push: false
-          provenance: false
-          tags: local/${{ matrix.name }}:build
-          outputs: type=docker,dest=/tmp/${{ matrix.name }}.tar
-          cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
-      - uses: actions/cache@v4
-        with:
-          path: ~/.cache/trivy
-          key: trivy-db-${{ github.run_id }}
-          restore-keys: trivy-db-
-      - name: Install Trivy
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          mkdir -p /tmp/trivy && cd /tmp/trivy
-          gh release download "v${TRIVY_VERSION}" -R aquasecurity/trivy \
-            -p '*Linux-64bit.tar.gz' -p '*checksums.txt'
-          ls -la
-          grep 'Linux-64bit.tar.gz$' ./*checksums.txt | sha256sum -c -
-          sudo tar -xzf ./*Linux-64bit.tar.gz -C /usr/local/bin trivy
-          trivy --version
-      - name: Trivy image scan
-        run: |
-          trivy image \
-            --input /tmp/${{ matrix.name }}.tar \
-            --severity HIGH,CRITICAL \
-            --ignore-unfixed \
-            --exit-code 1
+          git pull --ff-only origin main || true
+          VERSION=$(node -p "require('./package.json').version")
+          SHA=$(git rev-parse HEAD)
+          echo "{\"version\":\"$VERSION\",\"sha\":\"$SHA\"}" > release-info.json
+          cat release-info.json
       - uses: actions/upload-artifact@v4
         with:
-          name: image-${{ matrix.name }}
-          path: /tmp/${{ matrix.name }}.tar
+          name: release-info
+          path: release-info.json
           retention-days: 7
