@@ -137,6 +137,9 @@ jobs:
       contents: write
       issues: write
       pull-requests: write
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      sha: ${{ steps.ver.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -151,15 +154,24 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: npx semantic-release
-      - name: Write release info
+      - name: Release info
+        id: ver
         run: |
-          git pull --ff-only origin main || true
           VERSION=$(node -p "require('./package.json').version")
           SHA=$(git rev-parse HEAD)
-          echo "{\"version\":\"$VERSION\",\"sha\":\"$SHA\"}" > release-info.json
-          cat release-info.json
-      - uses: actions/upload-artifact@v4
-        with:
-          name: release-info
-          path: release-info.json
-          retention-days: 7
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION sha=$SHA"
+
+  # ============ STAGE 4: DEPLOY (reusable workflow) ============
+  deploy:
+    name: 4. Deploy
+    needs: [version]
+    if: needs.version.result == 'success'
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/deploy.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+      sha: ${{ needs.version.outputs.sha }}

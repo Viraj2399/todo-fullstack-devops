@@ -1,15 +1,18 @@
 ﻿name: CD
 
 on:
-  workflow_run:
-    workflows: ["CI"]
-    types: [completed]
-    branches: [main]
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      sha:
+        required: true
+        type: string
 
 permissions:
   id-token: write
   contents: read
-  actions: read
 
 concurrency:
   group: deploy-main
@@ -26,7 +29,6 @@ env:
 jobs:
   deploy:
     name: Deploy - ${{ matrix.app }}
-    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -43,23 +45,9 @@ jobs:
             container: api
             service: myapp-api-task-service
     steps:
-      - name: Download release info
-        uses: actions/download-artifact@v4
-        with:
-          name: release-info
-          path: ${{ runner.temp }}/rel
-          run-id: ${{ github.event.workflow_run.id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Read release info
-        id: rel
-        run: |
-          echo "version=$(jq -r .version "$RUNNER_TEMP/rel/release-info.json")" >> "$GITHUB_OUTPUT"
-          echo "sha=$(jq -r .sha "$RUNNER_TEMP/rel/release-info.json")" >> "$GITHUB_OUTPUT"
-
       - uses: actions/checkout@v4
         with:
-          ref: ${{ steps.rel.outputs.sha }}
+          ref: ${{ inputs.sha }}
 
       - name: Build image (once)
         run: |
@@ -92,7 +80,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: security-${{ matrix.app }}-${{ steps.rel.outputs.sha }}
+          name: security-${{ matrix.app }}-${{ inputs.sha }}
           path: |
             sbom-${{ matrix.app }}.json
             trivy-${{ matrix.app }}.txt
@@ -112,11 +100,11 @@ jobs:
         id: image
         run: |
           BASE=${{ steps.ecr.outputs.registry }}/${{ matrix.repo }}
-          docker tag local/${{ matrix.app }}:build "$BASE:${{ steps.rel.outputs.sha }}"
-          docker tag local/${{ matrix.app }}:build "$BASE:v${{ steps.rel.outputs.version }}"
-          docker push "$BASE:${{ steps.rel.outputs.sha }}"
-          docker push "$BASE:v${{ steps.rel.outputs.version }}"
-          echo "image=$BASE:${{ steps.rel.outputs.sha }}" >> "$GITHUB_OUTPUT"
+          docker tag local/${{ matrix.app }}:build "$BASE:${{ inputs.sha }}"
+          docker tag local/${{ matrix.app }}:build "$BASE:v${{ inputs.version }}"
+          docker push "$BASE:${{ inputs.sha }}"
+          docker push "$BASE:v${{ inputs.version }}"
+          echo "image=$BASE:${{ inputs.sha }}" >> "$GITHUB_OUTPUT"
 
       - name: Download current task definition
         run: |
