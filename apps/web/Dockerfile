@@ -11,6 +11,10 @@ RUN npm run build -- --configuration production
 # ---------- Stage 2: nginx (non-root, port 8080) ----------
 FROM nginxinc/nginx-unprivileged:stable-alpine
 
+USER root
+RUN apk upgrade --no-cache pcre2
+USER nginx
+
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 
