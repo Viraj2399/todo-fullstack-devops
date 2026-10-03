@@ -20,7 +20,7 @@ import {
 export class TodoService {
 
   private readonly apiUrl =
-    'http://localhost:3000/todos';
+    '/todos';
 
   constructor(
     private readonly http: HttpClient,
