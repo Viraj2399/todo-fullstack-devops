@@ -22,7 +22,7 @@ env:
 jobs:
   # ============ STAGE 1: TEST ============
   test:
-    name: 1. Test - ${{ matrix.app }}
+    name: Test - ${{ matrix.app }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -60,7 +60,7 @@ jobs:
 
   # ============ STAGE 2: VALIDATE ============
   gitleaks:
-    name: 2. Validate - Gitleaks
+    name: Validate - Gitleaks
     needs: [test]
     runs-on: ubuntu-latest
     permissions:
@@ -75,7 +75,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   trivy-fs:
-    name: 2. Validate - Trivy filesystem
+    name: Validate - Trivy filesystem
     needs: [test]
     runs-on: ubuntu-latest
     steps:
@@ -100,7 +100,7 @@ jobs:
         run: trivy fs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 .
 
   npm-audit:
-    name: 2. Validate - npm audit
+    name: Validate - npm audit
     needs: [test]
     runs-on: ubuntu-latest
     steps:
@@ -113,7 +113,7 @@ jobs:
           (cd apps/web && npm audit --omit=dev --audit-level=high)
 
   gate:
-    name: 2. Validate - Gate
+    name: Validate - Gate
     needs: [test, gitleaks, trivy-fs, npm-audit]
     if: always()
     runs-on: ubuntu-latest
@@ -129,7 +129,7 @@ jobs:
 
   # ============ STAGE 3: VERSION (main only) ============
   version:
-    name: 3. Version - semantic-release
+    name: Version - semantic-release
     needs: [gate]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -165,7 +165,7 @@ jobs:
 
   # ============ STAGE 4: DEPLOY (reusable workflow) ============
   deploy:
-    name: 4. Deploy
+    name: Deploy
     needs: [version]
     if: needs.version.result == 'success'
     permissions:
