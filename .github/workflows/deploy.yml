@@ -9,6 +9,10 @@ on:
       sha:
         required: true
         type: string
+      released:
+        required: false
+        default: "false"
+        type: string
 
 permissions:
   id-token: write
@@ -96,15 +100,52 @@ jobs:
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Push image (SHA + version tags)
+      - name: Push image (SHA tag always, version tag only on release)
         id: image
+        env:
+          BASE: ${{ steps.ecr.outputs.registry }}/${{ matrix.repo }}
+          REPO: ${{ matrix.repo }}
+          APP: ${{ matrix.app }}
+          SHA_TAG: ${{ inputs.sha }}
+          VERSION_TAG: v${{ inputs.version }}
+          RELEASED: ${{ inputs.released }}
         run: |
-          BASE=${{ steps.ecr.outputs.registry }}/${{ matrix.repo }}
-          docker tag local/${{ matrix.app }}:build "$BASE:${{ inputs.sha }}"
-          docker tag local/${{ matrix.app }}:build "$BASE:v${{ inputs.version }}"
-          docker push "$BASE:${{ inputs.sha }}"
-          docker push "$BASE:v${{ inputs.version }}"
-          echo "image=$BASE:${{ inputs.sha }}" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+
+          # Returns 0 if the tag exists in ECR, 1 if it does not.
+          # On unexpected errors (for example missing ecr:DescribeImages permission)
+          # it warns and returns 1, so the push is attempted. An IMMUTABLE repository
+          # will still reject a duplicate tag, which is the correct outcome.
+          tag_exists() {
+            local out
+            if out=$(aws ecr describe-images --repository-name "$REPO" --image-ids imageTag="$1" 2>&1); then
+              return 0
+            elif echo "$out" | grep -q 'ImageNotFoundException'; then
+              return 1
+            else
+              echo "::warning::Could not check tag $1: $out"
+              return 1
+            fi
+          }
+
+          push_if_new() {
+            local tag="$1"
+            if tag_exists "$tag"; then
+              echo "Tag $tag already exists in ECR, not pushing again."
+            else
+              docker tag "local/$APP:build" "$BASE:$tag"
+              docker push "$BASE:$tag"
+            fi
+          }
+
+          push_if_new "$SHA_TAG"
+          if [ "$RELEASED" = "true" ]; then
+            push_if_new "$VERSION_TAG"
+          else
+            echo "No release created for this commit, skipping version tag $VERSION_TAG."
+          fi
+
+          echo "image=$BASE:$SHA_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Download current task definition
         run: |
