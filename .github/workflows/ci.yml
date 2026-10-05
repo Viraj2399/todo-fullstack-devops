@@ -140,6 +140,7 @@ jobs:
     outputs:
       version: ${{ steps.ver.outputs.version }}
       sha: ${{ steps.ver.outputs.sha }}
+      released: ${{ steps.ver.outputs.released }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -150,18 +151,25 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Record commit before release
+        id: before
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: npx semantic-release
       - name: Release info
         id: ver
+        env:
+          SHA_BEFORE: ${{ steps.before.outputs.sha }}
         run: |
           VERSION=$(node -p "require('./package.json').version")
           SHA=$(git rev-parse HEAD)
+          if [ "$SHA" != "$SHA_BEFORE" ]; then RELEASED=true; else RELEASED=false; fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION sha=$SHA"
+          echo "released=$RELEASED" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION sha=$SHA released=$RELEASED"
 
   # ============ STAGE 4: DEPLOY (reusable workflow) ============
   deploy:
@@ -175,3 +183,4 @@ jobs:
     with:
       version: ${{ needs.version.outputs.version }}
       sha: ${{ needs.version.outputs.sha }}
+      released: ${{ needs.version.outputs.released }}
