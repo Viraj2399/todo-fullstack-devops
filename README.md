@@ -2,15 +2,15 @@
 
 A full-stack todo application (Angular web front end, Node.js API, MongoDB) deployed to AWS as a production-like environment. Every change is tested, scanned, versioned, built into a container image and deployed to Amazon ECS automatically. The platform is served through Amazon CloudFront over HTTPS, backed up to S3, replicated to a second region and monitored with Amazon CloudWatch.
 
-**Live URL:** [https://todo.ainsunhz.com](https://todo.ainsunhz.com)
+**Live URL:** https://todo.your-domain.com
 
 | Link | URL |
 |---|---|
-| Application | [https://todo.ainsunhz.com](https://todo.ainsunhz.com) |
-| Web health check | [https://todo.ainsunhz.com/healthz](https://todo.ainsunhz.com/healthz) |
-| API health check | [https://todo.ainsunhz.com/api/health](https://todo.ainsunhz.com/api/health) |
-| Architecture report | [docs/Todo-AWS-Architecture-Report.pdf](docs/Todo-AWS-Architecture-Report.pdf) |
-| Disaster recovery runbook | [docs/DR-RUNBOOK.md](docs/DR-RUNBOOK.md) |
+| Application | https://todo.your-domain.com |
+| Web health check | https://todo.your-domain.com/healthz |
+| API health check | https://todo.your-domain.com/api/health |
+| Architecture report | `docs/Todo-AWS-Architecture-Report.pdf` |
+| Disaster recovery runbook | `docs/DR-RUNBOOK.md` |
 
 ## Contents
 
@@ -32,19 +32,19 @@ A full-stack todo application (Angular web front end, Node.js API, MongoDB) depl
 
 ```mermaid
 flowchart TD
-    U[Users] --> R53[Route 53<br/>todo.ainsunhz.com]
-    R53 --> CF[CloudFront<br/>TLS 1.2+, Amazon certificate]
-    CF -->|HTTPS only<br/>origin.todo.ainsunhz.com| ALB[Application Load Balancer<br/>public subnets]
-    ALB -->|default| WEB[ECS Fargate: web<br/>nginx, private subnet]
-    ALB -->|/api/*, /todos, /todos/*| API[ECS Fargate: API<br/>private subnet]
-    API -->|via NAT gateway| DB[(MongoDB Atlas)]
-    BK[ECS Fargate: backup task<br/>mongodump] --> S3[(S3 backups<br/>ap-south-1)]
-    DB --> BK
-    S3 -->|cross-region replication| S3DR[(S3 DR copy<br/>ap-southeast-1)]
-    CW[CloudWatch alarms + dashboard] --> SNS[SNS email alerts]
+   U[Users] --> R53[Route 53<br/>todo.your-domain.com]
+   R53 --> CF[CloudFront<br/>TLS 1.2+, Amazon certificate]
+   CF -->|HTTPS only<br/>origin.your-domain.com| ALB[Application Load Balancer<br/>public subnets]
+   ALB -->|default| WEB[ECS Fargate: web<br/>nginx, private subnet]
+   ALB -->|/api/*, /todos, /todos/*| API[ECS Fargate: API<br/>private subnet]
+   API -->|via NAT gateway| DB[(MongoDB Atlas)]
+   BK[ECS Fargate: backup task<br/>mongodump] --> S3[(S3 backups<br/>ap-south-1)]
+   DB --> BK
+   S3 -->|cross-region replication| S3DR[(S3 DR copy<br/>ap-southeast-1)]
+   CW[CloudWatch alarms + dashboard] --> SNS[SNS email alerts]
 ```
 
-**Request path.** The browser resolves `todo.ainsunhz.com` through Route 53 to CloudFront. CloudFront terminates TLS and either serves cached web content or forwards the request over HTTPS to the load balancer. The load balancer routes API paths to the API service and everything else to the web service. Both services run in private subnets with no public IP. The API reaches MongoDB Atlas through the NAT gateway.
+**Request path.** The browser resolves `todo.your-domain.com` through Route 53 to CloudFront. CloudFront terminates TLS and either serves cached web content or forwards the request over HTTPS to the load balancer. The load balancer routes API paths to the API service and everything else to the web service. Both services run in private subnets with no public IP. The API reaches MongoDB Atlas through the NAT gateway.
 
 **Network.** One VPC (`10.0.0.0/16`) across two availability zones with three subnet tiers: public (load balancer, NAT gateway), private app (ECS tasks) and private DB (reserved). Each tier has its own route table.
 
@@ -88,7 +88,7 @@ flowchart TD
 
 ## Repository structure
 
-```
+```text
 .
 |-- apps/
 |   |-- web/                 Angular front end (Dockerfile, nginx.conf)
@@ -230,11 +230,11 @@ The API reads its configuration from environment variables (`PORT`, `NODE_ENV`) 
 1. Create a branch, commit with a Conventional Commit message and open a pull request into `develop`.
 2. When the checks pass, merge. Promote `develop` to `main` with a pull request.
 3. On `main`, the pipeline creates a version (when the commits warrant one), scans, pushes the image and deploys both services.
-4. Verify the deployment with the health checks [https://todo.ainsunhz.com/healthz](https://todo.ainsunhz.com/healthz) and [https://todo.ainsunhz.com/api/health](https://todo.ainsunhz.com/api/health):
+4. Verify the deployment with the health checks https://todo.your-domain.com/healthz and https://todo.your-domain.com/api/health:
 
 ```bash
-curl -s -o /dev/null -w "%{http_code}\n" https://todo.ainsunhz.com/healthz
-curl -s -o /dev/null -w "%{http_code}\n" https://todo.ainsunhz.com/api/health
+curl -s -o /dev/null -w "%{http_code}\n" https://todo.your-domain.com/healthz
+curl -s -o /dev/null -w "%{http_code}\n" https://todo.your-domain.com/api/health
 ```
 
 Both must return `200`. A failing deployment rolls back automatically. To roll back manually, update the ECS service to a previous task definition revision.
